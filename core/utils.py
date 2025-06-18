@@ -293,4 +293,20 @@ class CountersStatisticDB(Config):
     def _bytes_to_float(
         self, byte_data: bytes
     ) -> tuple[int | None, int | None, int | None]:
-        return tuple(byte_data) if byte_data else (None, None, None)
+        if not byte_data:
+            return (None, None, None)
+
+        if isinstance(byte_data, bytes):
+            hex_str = byte_data.hex()
+        else:
+            hex_str = byte_data
+
+        if not hex_str.startswith('07'):
+            hex_str = '07' + hex_str
+
+        hex_value = bytes.fromhex(hex_str)
+
+        if len(hex_value) < 4:
+            return (None, None, None)
+
+        return (hex_value[1], hex_value[2], hex_value[3])

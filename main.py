@@ -7,10 +7,23 @@ from core.config import Config
 from core.timer import execution_time
 from core.progress_bar import progress_bar
 from core.save_df_2_excel import save_df_2_excel
+from core.argparser import parse_args
 
 
 @execution_time
 def split_statistics_by_month():
+    """
+    Загружает показания счётчиков за последние Config.MONTH_AGO месяцев,
+    разбивает их по месяцам и сохраняет в отдельные месячные базы данных.
+
+    Логика работы:
+    - Определяет временной интервал начиная с текущей даты минус
+    Config.MONTH_AGO месяцев.
+    - Загружает данные порциями (пагинация) по 100000 записей.
+    - Группирует и добавляет статистику в соответствующие месячные БД.
+    - Отображает прогресс выполнения.
+    """
+    ...
     db = CountersStatisticDB()
     _, end = db.border_timestamp
     month_ago = dt.datetime.now() - relativedelta(months=Config.MONTH_AGO)
@@ -31,7 +44,29 @@ def split_statistics_by_month():
     progress_bar((total-1), total, 'Добавление статистики по месяцам: ')
 
 
-def save_counter_statistic(db_path, start, end, modem_ip: str):
+@execution_time
+def save_counter_statistic(
+    db_path: str, start: dt.datetime, end: dt.datetime, modem_ip: str
+):
+    """
+    Сохраняет статистику конкретного счетчика по IP за заданный период в
+    Excel-файл.
+
+    Аргументы:
+        db_path (str): Путь к базе данных со статистикой.
+        start (datetime): Начальная дата и время выборки.
+        end (datetime): Конечная дата и время выборки.
+        modem_ip (str): IP-адрес модема, для которого сохраняются данные.
+
+    Логика работы:
+    - Подключается к базе данных по указанному пути.
+    - Удаляет существующий Excel-файл статистики, если он есть.
+    - Загружает данные порциями по 10000 записей с пагинацией.
+    - Преобразует данные в DataFrame и подготавливает к сохранению.
+    - Сохраняет каждый набор данных на отдельный лист Excel-файла с именем
+    листа, включающим IP и номер страницы.
+    - Выводит сообщение о результате сохранения.
+    """
     db = CountersStatisticDB()
     db.switch_database(db_path)
     step = 10_000
@@ -67,14 +102,15 @@ def save_counter_statistic(db_path, start, end, modem_ip: str):
 
 
 if __name__ == '__main__':
-    # split_statistics_by_month()
-    month_ago = dt.datetime.now() - relativedelta(months=Config.MONTH_AGO)
-    db_path = (
-        r'C:\Users\a.choliy\Desktop\test\data\counters_statistics_2025_04.db'
-    )
-    save_counter_statistic(
-        db_path,
-        month_ago,
-        dt.datetime.now(),
-        modem_ip='10.24.7.132',
-    )
+    args = parse_args()
+
+    if args.split_statistics_by_month:
+        split_statistics_by_month()
+    elif args.save_counter_statistic:
+        db_path = 'counters_statistics.db'
+        start = dt.datetime.now() - relativedelta(months=Config.MONTH_AGO)
+        end = dt.datetime.now()
+        modem_ip = '10.24.7.132'
+        save_counter_statistic(db_path, start, end, modem_ip)
+    else:
+        print('Не указана команда. Используйте --help для справки.')
