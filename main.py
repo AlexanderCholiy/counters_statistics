@@ -1,7 +1,9 @@
 import os
+import sqlite3
+import zipfile
 import datetime as dt
-from dateutil.relativedelta import relativedelta
 
+from dateutil.relativedelta import relativedelta
 from core.utils import CountersStatisticDB
 from core.config import Config
 from core.timer import execution_time
@@ -26,12 +28,12 @@ def split_statistics_by_month():
     ...
     db = CountersStatisticDB()
     _, end = db.border_timestamp
-    month_ago = dt.datetime.now() - relativedelta(months=Config.MONTH_AGO)
+    month_ago = dt.datetime.now() - relativedelta(days=69, hours=18)
     total = db.count_records(month_ago, dt.datetime.now())
     step = 100_000
 
     for index in range(0, total, step):
-        progress_bar(index, total, 'Добавление статистики по месяцам: ')
+        progress_bar(index-1, total, 'Добавление статистики по месяцам: ')
         page_number = (index // step) + 1
         statistics = db.get_statistics_by_period(
             start=month_ago,
@@ -101,6 +103,50 @@ def save_counter_statistic(
         print('Показания отсутствуют')
 
 
+@execution_time
+def dump_and_remove_old_dbs():
+    """
+    Архивирует базы данных из папки Config.DATA_DIR, имена которых имеют формат
+    counters_statistics_YYYY_MM.db и дата которых старше Config.MONTH_AGO
+    месяцев, затем удаляет исходные .db файлы.
+    """
+    now = dt.datetime.now()
+
+    for filename in os.listdir(Config.DATA_DIR):
+        if (
+            not filename.startswith('counters_statistics_')
+            or not filename.endswith('.db')
+        ):
+            continue
+
+        parts = filename[:-3].split('_')
+        if len(parts) < 4:
+            continue
+
+        try:
+            year = int(parts[2])
+            month = int(parts[3])
+        except ValueError:
+            continue
+
+        months_diff = (now.year - year) * 12 + (now.month - month)
+        if months_diff > Config.MONTH_AGO:
+            db_path = os.path.join(Config.DATA_DIR, filename)
+            zip_path = os.path.join(
+                Config.DATA_DIR, filename.replace('.db', '.zip'))
+
+            with zipfile.ZipFile(
+                zip_path, 'w', compression=zipfile.ZIP_DEFLATED
+            ) as zipf:
+                zipf.write(db_path, arcname=filename)
+
+            os.remove(db_path)
+            print(
+                f'База {filename} архивирована в {zip_path} '
+                'и исходный файл удалён.'
+            )
+
+
 if __name__ == '__main__':
     args = parse_args()
 
@@ -112,5 +158,7 @@ if __name__ == '__main__':
         end = dt.datetime.now()
         modem_ip = '10.24.7.132'
         save_counter_statistic(db_path, start, end, modem_ip)
+    elif args.dump_and_remove_old_dbs:
+        dump_and_remove_old_dbs()
     else:
         print('Не указана команда. Используйте --help для справки.')

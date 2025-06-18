@@ -15,4 +15,9 @@ def parse_args():
         action='store_true',
         help='Запустить функцию save_counter_statistic'
     )
+    parser.add_argument(
+        '--dump_and_remove_old_dbs',
+        action='store_true',
+        help='Запустить функцию dump_and_remove_old_dbs'
+    )
     return parser.parse_args()
