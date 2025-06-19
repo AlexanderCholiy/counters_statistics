@@ -34,8 +34,16 @@ def parse_args():
         '--statistics_2_db',
         action='store_true',
         help=(
-            'Импортировать статистику из CSV/GZ-файлов в базу данных '
-            '(statistics_2_db).'
+            'Сохранить статистику счётчиков по IP-адресу за указанный период '
+            '(save_counter_statistic). Требует --modem_ip.'
+        )
+    )
+    parser.add_argument(
+        '--modem_ip',
+        type=str,
+        help=(
+            'IP-адрес модема для сохранения статистики '
+            '(обязателен с --save_counter_statistic).'
         )
     )
     parser.add_argument(

@@ -6,6 +6,7 @@ from collections import defaultdict
 from typing import Iterator
 
 import pandas as pd
+from dateutil.relativedelta import relativedelta
 from pandas.core.series import Series
 from sqlalchemy import create_engine, inspect, MetaData, tuple_, func
 from sqlalchemy.orm import sessionmaker
@@ -363,6 +364,8 @@ class CountersStatisticDB(Config):
         """
         Поиск файлов .csv или .gz, не вошедших в БД.
         Если для месяца уже есть zip-архив, то файлы этого месяца пропускаются.
+        Файлы, относящиеся к месяцам старше Config.MONTH_AGO месяцев назад,
+        пропускаются.
         """
         unprocessed_files = []
         db_date_ranges = {}
@@ -393,6 +396,9 @@ class CountersStatisticDB(Config):
             else:
                 zipped_months.add((year, month))
 
+        cutoff_date = dt.datetime.now() - relativedelta(
+            months=Config.MONTH_AGO)
+
         for filename in os.listdir(self.STATISTIC_DIR):
             if filename.endswith('.csv.gz'):
                 continue
@@ -406,6 +412,10 @@ class CountersStatisticDB(Config):
                 continue
 
             if (year, month) in zipped_months:
+                continue
+
+            file_month_date = dt.datetime(year, month, 1)
+            if file_month_date < cutoff_date:
                 continue
 
             file_path = os.path.join(self.STATISTIC_DIR, filename)

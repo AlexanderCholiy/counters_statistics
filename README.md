@@ -14,15 +14,15 @@
 
 1. **Сделайте скрипт запуска исполняемым:**
 ```bash
-sudo chmod +x counters_statistics.sh
+sudo chmod +x run_counters_statistics.sh
 ```
 
 2. **Для автоматического выполнения задач на сервере рекомендуется использовать системный crontab:**
 # Удаление обработанных CSV в 00:00
-0 0 * * * a.choliy /home/a.choliy/counters_statistics/run_statistics.sh --remove_processed_csv_gz
+0 0 * * * a.choliy /home/a.choliy/counters_statistics/run_counters_statistics.sh --remove_processed_csv_gz
 
 # Загрузка статистики в БД в 01:00
-0 1 * * * a.choliy /home/a.choliy/counters_statistics/run_statistics.sh --statistics_2_db
+0 1 * * * a.choliy /home/a.choliy/counters_statistics/run_counters_statistics.sh --statistics_2_db
 
 # Архивация старых БД в 02:00
-0 2 * * * a.choliy /home/a.choliy/counters_statistics/run_statistics.sh --zip_and_remove_old_dbs
+0 2 * * * a.choliy /home/a.choliy/counters_statistics/run_counters_statistics.sh --zip_and_remove_old_dbs

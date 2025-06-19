@@ -99,7 +99,7 @@ def save_counter_statistic(
     page_number = 1
     for index, db_file in enumerate(sorted(databases)):
         progress_bar(index, len(databases), 'Поиск данных: ')
-        db = CountersStatisticDB(f"sqlite:///{db_file}")
+        db = CountersStatisticDB(db_file)
         filename = os.path.basename(db_file)
         parts = filename.replace('.db', '').split('_')
         year = int(parts[2])
@@ -218,9 +218,14 @@ if __name__ == '__main__':
         db_path = r'data\counters_statistics_2025_01.db'
         split_statistics_by_month(db_path)
     elif args.save_counter_statistic:
-        start = dt.datetime.now() - relativedelta(months=12)
+        if not args.modem_ip:
+            raise ValueError(
+                'Ошибка: для --save_counter_statistic '
+                'необходимо указать --modem_ip'
+            )
+        start = dt.datetime.now() - relativedelta(months=Config.MONTH_AGO)
         end = dt.datetime.now()
-        modem_ip = '10.24.7.132'
+        modem_ip = args.modem_ip
         save_counter_statistic(start, end, modem_ip)
     elif args.zip_and_remove_old_dbs:
         try:
