@@ -1,11 +1,11 @@
 import os
-import sqlite3
 import zipfile
 import datetime as dt
 
 from dateutil.relativedelta import relativedelta
 from core.utils import CountersStatisticDB
 from core.config import Config
+from core.logger import FileRotatingLogger
 from core.timer import execution_time
 from core.progress_bar import progress_bar
 from core.save_df_2_excel import save_df_2_excel
@@ -13,30 +13,27 @@ from core.argparser import parse_args
 
 
 @execution_time
-def split_statistics_by_month():
+def split_statistics_by_month(db_path: str):
     """
-    Загружает показания счётчиков за последние Config.MONTH_AGO месяцев,
+    Загружает показания счётчиков из тяжелой БД,
     разбивает их по месяцам и сохраняет в отдельные месячные базы данных.
 
     Логика работы:
-    - Определяет временной интервал начиная с текущей даты минус
-    Config.MONTH_AGO месяцев.
-    - Загружает данные порциями (пагинация) по 100000 записей.
+    - Определяет граничеые временные интервалы.
+    - Загружает данные порциями (пагинация) по N записей.
     - Группирует и добавляет статистику в соответствующие месячные БД.
     - Отображает прогресс выполнения.
     """
-    ...
-    db = CountersStatisticDB()
-    _, end = db.border_timestamp
-    month_ago = dt.datetime.now() - relativedelta(days=69, hours=18)
-    total = db.count_records(month_ago, dt.datetime.now())
+    db = CountersStatisticDB(db_path)
+    start, end = db.border_timestamp
+    total = db.count_records(start, dt.datetime.now())
     step = 100_000
 
     for index in range(0, total, step):
         progress_bar(index-1, total, 'Добавление статистики по месяцам: ')
         page_number = (index // step) + 1
         statistics = db.get_statistics_by_period(
-            start=month_ago,
+            start=start,
             end=end,
             page_number=page_number,
             page_size=step
@@ -69,8 +66,7 @@ def save_counter_statistic(
     листа, включающим IP и номер страницы.
     - Выводит сообщение о результате сохранения.
     """
-    db = CountersStatisticDB()
-    db.switch_database(db_path)
+    db = CountersStatisticDB(db_path)
     step = 10_000
     page_number = 1
 
@@ -107,14 +103,14 @@ def save_counter_statistic(
 def dump_and_remove_old_dbs():
     """
     Архивирует базы данных из папки Config.DATA_DIR, имена которых имеют формат
-    counters_statistics_YYYY_MM.db и дата которых старше Config.MONTH_AGO
+    Config.PREFIX_YYYY_MM.db и дата которых старше Config.MONTH_AGO
     месяцев, затем удаляет исходные .db файлы.
     """
     now = dt.datetime.now()
 
     for filename in os.listdir(Config.DATA_DIR):
         if (
-            not filename.startswith('counters_statistics_')
+            not filename.startswith(f'{Config.DB_PREFIX}_')
             or not filename.endswith('.db')
         ):
             continue
@@ -149,16 +145,22 @@ def dump_and_remove_old_dbs():
 
 if __name__ == '__main__':
     args = parse_args()
+    logger = FileRotatingLogger(
+        Config.LOG_DIR, debug=Config.DEBUG).get_logger()
 
     if args.split_statistics_by_month:
-        split_statistics_by_month()
+        db_path = r'data\counters_statistics_2025_01.db'
+        split_statistics_by_month(db_path)
     elif args.save_counter_statistic:
-        db_path = 'counters_statistics.db'
+        db_path = r'data\counters_statistics_2025_01.db'
         start = dt.datetime.now() - relativedelta(months=Config.MONTH_AGO)
         end = dt.datetime.now()
         modem_ip = '10.24.7.132'
         save_counter_statistic(db_path, start, end, modem_ip)
     elif args.dump_and_remove_old_dbs:
-        dump_and_remove_old_dbs()
+        try:
+            dump_and_remove_old_dbs()
+        except Exception:
+            logger.exception('Ошибка при архивации БД')
     else:
         print('Не указана команда. Используйте --help для справки.')

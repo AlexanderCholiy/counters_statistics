@@ -12,22 +12,16 @@ from .config import Config
 
 class CountersStatisticDB(Config):
 
-    def __init__(self, db_path: str | None = None, debug: bool = False):
+    def __init__(self, db_path: str, debug: bool = False):
         self.debug = debug
-        self.engine = self.create_engine(db_path)
+        self.engine = create_engine(db_path)
         self.metadata = MetaData()
         self.inspector = inspect(self.engine)
         self.session = sessionmaker(bind=self.engine)
 
-    def create_engine(self, db_path: str = None):
-        """Создание engine для указанной базы данных или по умолчанию"""
-        if db_path:
-            return create_engine(f'sqlite:///{db_path}', echo=self.debug)
-        return create_engine(f'sqlite:///{self.DB_PATH}', echo=self.debug)
-
     def switch_database(self, db_path: str):
         """Переключение на другую базу данных"""
-        self.engine = self.create_engine(db_path)
+        self.engine = create_engine(db_path)
         self.inspector = inspect(self.engine)
         self.session = sessionmaker(bind=self.engine)
 
@@ -79,7 +73,7 @@ class CountersStatisticDB(Config):
 
     def create_monthly_db(self, year: int, month: int):
         """Создание базы данных для заданного месяца"""
-        db_name = f'counters_statistics_{year}_{month:02d}.db'
+        db_name = f'{self.DB_PREFIX}_{year}_{month:02d}.db'
         db_path = os.path.join(self.DATA_DIR, db_name)
         engine = create_engine(f'sqlite:///{db_path}', echo=self.debug)
         return engine
