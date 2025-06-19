@@ -360,14 +360,18 @@ class CountersStatisticDB(Config):
         print(f'Архив {zip_path} распакован в {extract_dir}.')
 
     def data_not_in_db(self) -> list[str]:
-        """Поиск файлов .csv или .gz, не вошедших в БД."""
+        """
+        Поиск файлов .csv или .gz, не вошедших в БД.
+        Если для месяца уже есть zip-архив, то файлы этого месяца пропускаются.
+        """
         unprocessed_files = []
         db_date_ranges = {}
+        zipped_months: set[tuple[int, int]] = set()
 
         for filename in os.listdir(Config.DATA_DIR):
             if (
                 not filename.startswith(f'{Config.DB_PREFIX}_')
-                or not filename.endswith('.db')
+                or not (filename.endswith('.db') or filename.endswith('.zip'))
             ):
                 continue
 
@@ -380,11 +384,14 @@ class CountersStatisticDB(Config):
             except ValueError:
                 continue
 
-            db_path = os.path.join(Config.DATA_DIR, filename)
-            self.switch_database(db_path)
-            min_ts, max_ts = self.border_timestamp
-            if min_ts and max_ts:
-                db_date_ranges[(year, month)] = (min_ts, max_ts)
+            if filename.endswith('.db'):
+                db_path = os.path.join(Config.DATA_DIR, filename)
+                self.switch_database(db_path)
+                min_ts, max_ts = self.border_timestamp
+                if min_ts and max_ts:
+                    db_date_ranges[(year, month)] = (min_ts, max_ts)
+            else:
+                zipped_months.add((year, month))
 
         for filename in os.listdir(self.STATISTIC_DIR):
             if filename.endswith('.csv.gz'):
@@ -396,6 +403,9 @@ class CountersStatisticDB(Config):
                 file_date = dt.datetime.strptime(filename[:10], '%Y-%m-%d')
                 year, month = file_date.year, file_date.month
             except ValueError:
+                continue
+
+            if (year, month) in zipped_months:
                 continue
 
             file_path = os.path.join(self.STATISTIC_DIR, filename)
