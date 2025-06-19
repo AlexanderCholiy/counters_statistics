@@ -1,5 +1,4 @@
 import os
-import zipfile
 import datetime as dt
 
 from dateutil.relativedelta import relativedelta
@@ -45,50 +44,84 @@ def split_statistics_by_month(db_path: str):
 
 @execution_time
 def save_counter_statistic(
-    db_path: str, start: dt.datetime, end: dt.datetime, modem_ip: str
+    start: dt.datetime, end: dt.datetime, modem_ip: str
 ):
     """
     Сохраняет статистику конкретного счетчика по IP за заданный период в
-    Excel-файл.
+    Excel-файл из всех подходящих баз данных.
 
     Аргументы:
-        db_path (str): Путь к базе данных со статистикой.
         start (datetime): Начальная дата и время выборки.
         end (datetime): Конечная дата и время выборки.
         modem_ip (str): IP-адрес модема, для которого сохраняются данные.
 
     Логика работы:
-    - Подключается к базе данных по указанному пути.
     - Удаляет существующий Excel-файл статистики, если он есть.
-    - Загружает данные порциями по 10000 записей с пагинацией.
+    - Подключается к базам данных которые соотв. фильтру по дате.
+    - Загружает данные порциями по N записей с пагинацией.
     - Преобразует данные в DataFrame и подготавливает к сохранению.
     - Сохраняет каждый набор данных на отдельный лист Excel-файла с именем
     листа, включающим IP и номер страницы.
     - Выводит сообщение о результате сохранения.
     """
-    db = CountersStatisticDB(db_path)
-    step = 10_000
-    page_number = 1
+    databases = []
+
+    for filename in os.listdir(Config.DATA_DIR):
+        if (
+            not filename.startswith(f'{Config.DB_PREFIX}_')
+            or not filename.endswith('.db')
+        ):
+            continue
+
+        parts = filename.replace('.db', '').split('_')
+        if len(parts) < 4:
+            continue
+
+        try:
+            year = int(parts[2])
+            month = int(parts[3])
+            file_date = dt.datetime(year, month, 1)
+        except ValueError:
+            continue
+
+        if start <= file_date <= end:
+            full_path = os.path.join(Config.DATA_DIR, filename)
+            databases.append(full_path)
 
     if os.path.isfile(Config.STATISTIC_PATH):
         os.remove(Config.STATISTIC_PATH)
 
-    while True:
-        statistics = db.get_statistics_by_period(
-            start=start,
-            end=end,
-            page_number=page_number,
-            page_size=step,
-            modem_ip=modem_ip
-        )
-        if not statistics:
-            break
+    if not databases:
+        print('Нет подходящих незаархивированных БД для выбранного периода.')
+        return
 
-        df = db.prepare_statistics(db.statistics_to_dataframe(statistics))
-        sheet_name = f'{modem_ip} ({page_number})'
-        save_df_2_excel(df, Config.STATISTIC_PATH, sheet_name)
+    step = 10_000
+    page_number = 1
+    for index, db_file in enumerate(sorted(databases)):
+        progress_bar(index, len(databases), 'Поиск данных: ')
+        db = CountersStatisticDB(f"sqlite:///{db_file}")
+        filename = os.path.basename(db_file)
+        parts = filename.replace('.db', '').split('_')
+        year = int(parts[2])
+        month = int(parts[3])
+        sheet_prefix = f'{year}_{month:02d}'
 
-        page_number += 1
+        while True:
+            statistics = db.get_statistics_by_period(
+                start=start,
+                end=end,
+                page_number=page_number,
+                page_size=step,
+                modem_ip=modem_ip
+            )
+            if not statistics:
+                break
+
+            df = db.prepare_statistics(db.statistics_to_dataframe(statistics))
+            sheet_name = f'{sheet_prefix} ({page_number})'
+            save_df_2_excel(df, Config.STATISTIC_PATH, sheet_name)
+
+            page_number += 1
 
     if statistics or page_number > 1:
         print(
@@ -100,7 +133,7 @@ def save_counter_statistic(
 
 
 @execution_time
-def dump_and_remove_old_dbs():
+def zip_and_remove_old_dbs():
     """
     Архивирует базы данных из папки Config.DATA_DIR, имена которых имеют формат
     Config.PREFIX_YYYY_MM.db и дата которых старше Config.MONTH_AGO
@@ -128,19 +161,52 @@ def dump_and_remove_old_dbs():
         months_diff = (now.year - year) * 12 + (now.month - month)
         if months_diff > Config.MONTH_AGO:
             db_path = os.path.join(Config.DATA_DIR, filename)
-            zip_path = os.path.join(
-                Config.DATA_DIR, filename.replace('.db', '.zip'))
+            CountersStatisticDB.zip_db(db_path, Config.DATA_DIR)
 
-            with zipfile.ZipFile(
-                zip_path, 'w', compression=zipfile.ZIP_DEFLATED
-            ) as zipf:
-                zipf.write(db_path, arcname=filename)
 
-            os.remove(db_path)
-            print(
-                f'База {filename} архивирована в {zip_path} '
-                'и исходный файл удалён.'
-            )
+@execution_time
+def statistics_2_db():
+    """
+    Загружает данные счётчиков из .csv или .gz файлов в основную базу данных,
+    распределяя записи по отдельным месячным БД.
+
+    Логика работы:
+    - Создаёт/подключается к основной БД текущего месяца.
+    - Ищет не обработанные файлы статистики (файлы, не вошедшие в БД).
+    - Читает данные из каждого файла в виде DataFrame.
+    - Разбивает DataFrame на порции по 100 000 записей.
+    - Каждую порцию преобразует в объекты модели Statistic.
+    - Добавляет записи в соответствующие месячные БД, исключая дубликаты.
+    """
+    today = dt.datetime.today()
+    db_name = f'{Config.DB_PREFIX}_{today.year}_{today.month:02d}.db'
+    db_path = os.path.join(Config.DATA_DIR, db_name)
+    db = CountersStatisticDB(db_path)
+    db.statistics_2_db()
+
+
+@execution_time
+def remove_processed_csv_gz():
+    """
+    Удаляет все .csv.gz файлы из директории со статистикой
+    (Config.STATISTIC_DIR).
+
+    Логика работы:
+    - Перебирает все файлы в директории.
+    - Отбирает только те, что заканчиваются на .csv.gz и содержат валидную
+    дату в имени.
+    - Удаляет такие файлы из файловой системы.
+    """
+    for filename in os.listdir(Config.STATISTIC_DIR):
+        if not filename.endswith('.csv.gz'):
+            continue
+
+        try:
+            dt.datetime.strptime(filename[:10], '%Y-%m-%d').date()
+        except ValueError:
+            continue
+
+        os.remove(os.path.join(Config.STATISTIC_DIR, filename))
 
 
 if __name__ == '__main__':
@@ -152,15 +218,27 @@ if __name__ == '__main__':
         db_path = r'data\counters_statistics_2025_01.db'
         split_statistics_by_month(db_path)
     elif args.save_counter_statistic:
-        db_path = r'data\counters_statistics_2025_01.db'
-        start = dt.datetime.now() - relativedelta(months=Config.MONTH_AGO)
+        start = dt.datetime.now() - relativedelta(months=12)
         end = dt.datetime.now()
         modem_ip = '10.24.7.132'
-        save_counter_statistic(db_path, start, end, modem_ip)
-    elif args.dump_and_remove_old_dbs:
+        save_counter_statistic(start, end, modem_ip)
+    elif args.zip_and_remove_old_dbs:
         try:
-            dump_and_remove_old_dbs()
+            zip_and_remove_old_dbs()
         except Exception:
             logger.exception('Ошибка при архивации БД')
+    elif args.statistics_2_db:
+        try:
+            statistics_2_db()
+        except Exception:
+            logger.exception('Ошибка при добавлении данных в БД')
+    elif args.remove_processed_csv_gz:
+        try:
+            remove_processed_csv_gz()
+        except Exception:
+            logger.exception('Ошибка при удалении лишних .csv.gz файлов')
     else:
+        # CountersStatisticDB.unzip_db(
+        #     'data/counters_statistics_2025_01.zip', Config.DATA_DIR
+        # )
         print('Не указана команда. Используйте --help для справки.')

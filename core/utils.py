@@ -1,27 +1,34 @@
+import gzip
 import os
+import zipfile
 import datetime as dt
 from collections import defaultdict
+from typing import Iterator
 
 import pandas as pd
+from pandas.core.series import Series
 from sqlalchemy import create_engine, inspect, MetaData, tuple_, func
 from sqlalchemy.orm import sessionmaker
 
 from .models import Statistic, Base
 from .config import Config
+from .progress_bar import progress_bar
 
 
 class CountersStatisticDB(Config):
 
     def __init__(self, db_path: str, debug: bool = False):
         self.debug = debug
-        self.engine = create_engine(db_path)
+        self.engine = create_engine(f'sqlite:///{db_path}')
+        Base.metadata.create_all(self.engine)
         self.metadata = MetaData()
         self.inspector = inspect(self.engine)
         self.session = sessionmaker(bind=self.engine)
 
     def switch_database(self, db_path: str):
         """Переключение на другую базу данных"""
-        self.engine = create_engine(db_path)
+        self.engine = create_engine(f'sqlite:///{db_path}')
+        Base.metadata.create_all(self.engine)
         self.inspector = inspect(self.engine)
         self.session = sessionmaker(bind=self.engine)
 
@@ -79,7 +86,9 @@ class CountersStatisticDB(Config):
         return engine
 
     @staticmethod
-    def str_to_bytes(s: str | None) -> bytes | None:
+    def str_to_bytes(s: str | bytes | None) -> bytes | None:
+        if isinstance(s, bytes):
+            return s
         if s is None or s == '':
             return None
         return bytes.fromhex(s)
@@ -304,3 +313,180 @@ class CountersStatisticDB(Config):
             return (None, None, None)
 
         return (hex_value[1], hex_value[2], hex_value[3])
+
+    @staticmethod
+    def zip_db(db_path: str, zip_dir: str):
+        if not os.path.isfile(db_path):
+            raise FileNotFoundError(f'Файл базы данных не найден: {db_path}')
+        if not db_path.endswith('.db'):
+            raise ValueError(f'Файл не является .db: {db_path}')
+
+        os.makedirs(zip_dir, exist_ok=True)
+        filename = os.path.basename(db_path)
+        zip_path = os.path.join(zip_dir, filename.replace('.db', '.zip'))
+
+        if os.path.exists(zip_path):
+            raise FileExistsError(f'Архив уже существует: {zip_path}.')
+
+        with zipfile.ZipFile(
+            zip_path, 'w', compression=zipfile.ZIP_DEFLATED
+        ) as zipf:
+            zipf.write(db_path, arcname=filename)
+
+        os.remove(db_path)
+        print(
+            f'БД {filename} архивирована в {zip_path}. Исходный файл удалён.'
+        )
+
+    @staticmethod
+    def unzip_db(zip_path: str, extract_dir: str, overwrite: bool = False):
+        if not os.path.isfile(zip_path):
+            raise FileNotFoundError(f'Архив не найден: {zip_path}')
+        if not zip_path.endswith('.zip'):
+            raise ValueError(f'Файл не является .zip архивом: {zip_path}')
+
+        os.makedirs(extract_dir, exist_ok=True)
+
+        with zipfile.ZipFile(zip_path, 'r') as zipf:
+            for member in zipf.namelist():
+                target_path = os.path.join(extract_dir, member)
+
+                if os.path.exists(target_path) and not overwrite:
+                    raise FileExistsError(
+                        f'Файл {target_path} уже существует.')
+
+            zipf.extractall(path=extract_dir)
+
+        print(f'Архив {zip_path} распакован в {extract_dir}.')
+
+    def data_not_in_db(self) -> list[str]:
+        """Поиск файлов .csv или .gz, не вошедших в БД."""
+        unprocessed_files = []
+        db_date_ranges = {}
+
+        for filename in os.listdir(Config.DATA_DIR):
+            if (
+                not filename.startswith(f'{Config.DB_PREFIX}_')
+                or not filename.endswith('.db')
+            ):
+                continue
+
+            parts = filename[:-3].split('_')
+            if len(parts) < 4:
+                continue
+            try:
+                year = int(parts[2])
+                month = int(parts[3])
+            except ValueError:
+                continue
+
+            db_path = os.path.join(Config.DATA_DIR, filename)
+            self.switch_database(db_path)
+            min_ts, max_ts = self.border_timestamp
+            if min_ts and max_ts:
+                db_date_ranges[(year, month)] = (min_ts, max_ts)
+
+        for filename in os.listdir(self.STATISTIC_DIR):
+            if filename.endswith('.csv.gz'):
+                continue
+            if not (filename.endswith('.csv') or filename.endswith('.gz')):
+                continue
+
+            try:
+                file_date = dt.datetime.strptime(filename[:10], '%Y-%m-%d')
+                year, month = file_date.year, file_date.month
+            except ValueError:
+                continue
+
+            file_path = os.path.join(self.STATISTIC_DIR, filename)
+            if (year, month) in db_date_ranges:
+                min_ts, max_ts = db_date_ranges[(year, month)]
+                if not (min_ts <= file_date <= max_ts):
+                    unprocessed_files.append(file_path)
+            else:
+                unprocessed_files.append(file_path)
+
+        return unprocessed_files
+
+    def read_statistics(self, file_path: str) -> pd.DataFrame:
+        """Чтение содержимого .csv файла (в т.ч. из gzip архива)"""
+        zip_file: bool = file_path.endswith('.gz')
+        open_func = gzip.open if zip_file else open
+
+        def line_generator() -> Iterator[list]:
+            current_time: dt.datetime | None = None
+            with open_func(file_path, 'rt' if zip_file else 'r') as file:
+                for line in file:
+                    line = line.strip()
+                    if line.startswith('T'):
+                        current_time = dt.datetime.strptime(
+                            line[2:], '%d.%m.%Y_%H:%M:%S'
+                        )
+                    elif current_time:
+                        values = line[2:].split(',')
+                        yield [current_time] + values
+
+        return pd.DataFrame(
+            line_generator(),
+            columns=[
+                'timestamp', 'modem_ip', 'mac', 'local_id',
+                'voltage_1', 'current_1', 'angle_1',
+                'voltage_2', 'current_2', 'angle_2',
+                'voltage_3', 'current_3', 'angle_3',
+            ]
+        )
+
+    @staticmethod
+    def hex_to_bytes(hex_str: str) -> bytes | None:
+        if pd.isna(hex_str) or hex_str == '':
+            return None
+        try:
+            return bytes.fromhex(hex_str)
+        except ValueError:
+            return None
+
+    def prepare_statistic_from_row(self, row: Series) -> Statistic:
+        """Преобразование данных ряда в Dataframe в Static."""
+        return Statistic(
+            timestamp=row.timestamp,
+            modem_ip=row.modem_ip,
+            mac=row.mac,
+            local_id=int(row.local_id),
+
+            voltage_1=self.hex_to_bytes(row.voltage_1),
+            current_1=self.hex_to_bytes(row.current_1),
+            angle_1=self.hex_to_bytes(row.angle_1),
+
+            voltage_2=self.hex_to_bytes(row.voltage_2),
+            current_2=self.hex_to_bytes(row.current_2),
+            angle_2=self.hex_to_bytes(row.angle_2),
+
+            voltage_3=self.hex_to_bytes(row.voltage_3),
+            current_3=self.hex_to_bytes(row.current_3),
+            angle_3=self.hex_to_bytes(row.angle_3),
+        )
+
+    def statistics_2_db(self):
+        """Запись статистики из .gz и .csv по БД распределенным по месяцам."""
+        batch_size = 100_000
+        data_not_in_db = self.data_not_in_db()
+
+        for index, file_path in enumerate(self.data_not_in_db()):
+            print(f'Файл {file_path} ({index + 1}/{len(data_not_in_db)})')
+            df = self.read_statistics(file_path)
+            total = len(df)
+
+            for start in range(0, total, batch_size):
+                end = min(start + batch_size, total)
+                batch_df = df.iloc[start:end]
+
+                statistics = []
+                for i, row in enumerate(batch_df.itertuples(index=False)):
+                    progress_bar(
+                        start + i, total,
+                        f'Подготовка {file_path} для записи в БД: '
+                    )
+                    stat = self.prepare_statistic_from_row(row)
+                    statistics.append(stat)
+
+                self.add_statistics_to_monthly_db(statistics)

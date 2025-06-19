@@ -12,7 +12,7 @@ def progress_bar(
     iteration: int,
     total: int,
     message: str = 'Загрузка: ',
-    bar_color: str = Fore.LIGHTRED_EX,
+    bar_color: str = Fore.LIGHTGREEN_EX,
 ) -> None:
     if total == 0:
         return
