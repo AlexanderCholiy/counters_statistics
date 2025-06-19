@@ -5,6 +5,7 @@ from dateutil.relativedelta import relativedelta
 from core.utils import CountersStatisticDB
 from core.config import Config
 from core.logger import FileRotatingLogger
+from sqlalchemy.exc import OperationalError
 from core.timer import execution_time
 from core.progress_bar import progress_bar
 from core.save_df_2_excel import save_df_2_excel
@@ -226,7 +227,13 @@ if __name__ == '__main__':
         start = dt.datetime.now() - relativedelta(months=Config.MONTH_AGO)
         end = dt.datetime.now()
         modem_ip = args.modem_ip
-        save_counter_statistic(start, end, modem_ip)
+        try:
+            save_counter_statistic(start, end, modem_ip)
+        except OperationalError as e:
+            if 'database is locked' in str(e):
+                print('База данных занята, пожалуйста, подождите.')
+            else:
+                raise
     elif args.zip_and_remove_old_dbs:
         try:
             zip_and_remove_old_dbs()
