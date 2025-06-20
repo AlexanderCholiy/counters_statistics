@@ -239,18 +239,18 @@ if __name__ == '__main__':
             zip_and_remove_old_dbs()
         except Exception:
             logger.exception('Ошибка при архивации БД')
+            raise
     elif args.statistics_2_db:
         try:
             statistics_2_db()
         except Exception:
             logger.exception('Ошибка при добавлении данных в БД')
+            raise
     elif args.remove_processed_csv_gz:
         try:
             remove_processed_csv_gz()
         except Exception:
             logger.exception('Ошибка при удалении лишних .csv.gz файлов')
+            raise
     else:
-        # CountersStatisticDB.unzip_db(
-        #     'data/counters_statistics_2025_01.zip', Config.DATA_DIR
-        # )
         print('Не указана команда. Используйте --help для справки.')

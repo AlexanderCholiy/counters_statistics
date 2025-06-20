@@ -10,4 +10,4 @@ class Config:
     DB_PREFIX = 'counters_statistics'
     STATISTIC_PATH = os.path.join(ROOT_DIR, 'data', f'{DB_PREFIX}.xlsx')
     MONTH_AGO = 1
-    DEBUG = True
+    DEBUG = False

@@ -8,8 +8,11 @@ from typing import Iterator
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 from pandas.core.series import Series
-from sqlalchemy import create_engine, inspect, MetaData, tuple_, func
+from sqlalchemy import (
+    create_engine as sqlalchemy_create_engine, inspect, MetaData, tuple_, func
+)
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.engine import Engine
 
 from .models import Statistic, Base
 from .config import Config
@@ -18,17 +21,26 @@ from .progress_bar import progress_bar
 
 class CountersStatisticDB(Config):
 
-    def __init__(self, db_path: str, debug: bool = False):
-        self.debug = debug
-        self.engine = create_engine(f'sqlite:///{db_path}')
+    def __init__(self, db_path: str):
+        self.engine = self.create_engine(db_path)
         Base.metadata.create_all(self.engine)
         self.metadata = MetaData()
         self.inspector = inspect(self.engine)
         self.session = sessionmaker(bind=self.engine)
 
+    def create_engine(self, db_path: str) -> Engine:
+        """Создаёт движок базы данных, распаковывая zip при необходимости."""
+        if not os.path.exists(db_path):
+            zip_path = db_path.replace('.db', '.zip')
+            if os.path.exists(zip_path):
+                extract_dir = os.path.dirname(db_path)
+                self.unzip_db(zip_path, extract_dir, overwrite=True)
+        return sqlalchemy_create_engine(
+            f'sqlite:///{db_path}', echo=self.DEBUG)
+
     def switch_database(self, db_path: str):
         """Переключение на другую базу данных"""
-        self.engine = create_engine(f'sqlite:///{db_path}')
+        self.engine = self.create_engine(db_path)
         Base.metadata.create_all(self.engine)
         self.inspector = inspect(self.engine)
         self.session = sessionmaker(bind=self.engine)
@@ -83,8 +95,7 @@ class CountersStatisticDB(Config):
         """Создание базы данных для заданного месяца"""
         db_name = f'{self.DB_PREFIX}_{year}_{month:02d}.db'
         db_path = os.path.join(self.DATA_DIR, db_name)
-        engine = create_engine(f'sqlite:///{db_path}', echo=self.debug)
-        return engine
+        return self.create_engine(db_path)
 
     @staticmethod
     def str_to_bytes(s: str | bytes | None) -> bytes | None:
@@ -358,46 +369,53 @@ class CountersStatisticDB(Config):
 
             zipf.extractall(path=extract_dir)
 
-        print(f'Архив {zip_path} распакован в {extract_dir}.')
+        if overwrite:
+            os.remove(zip_path)
+            print(f'Архив {zip_path} распакован в {extract_dir} и удален.')
+        else:
+            print(f'Архив {zip_path} распакован в {extract_dir}.')
 
     def data_not_in_db(self) -> list[str]:
         """
         Поиск файлов .csv или .gz, не вошедших в БД.
-        Если для месяца уже есть zip-архив, то файлы этого месяца пропускаются.
+        Если для месяца уже есть zip-архив, тогда этот архив будет
+        разархивирован для проверки данных.
         Файлы, относящиеся к месяцам старше Config.MONTH_AGO месяцев назад,
         пропускаются.
         """
         unprocessed_files = []
-        db_date_ranges = {}
-        zipped_months: set[tuple[int, int]] = set()
+        db_date_ranges: dict[
+            tuple[int, int], tuple[dt.datetime, dt.datetime]
+        ] = {}
+        cutoff_date = dt.datetime.now() - relativedelta(
+            months=Config.MONTH_AGO)
 
         for filename in os.listdir(Config.DATA_DIR):
-            if (
-                not filename.startswith(f'{Config.DB_PREFIX}_')
-                or not (filename.endswith('.db') or filename.endswith('.zip'))
-            ):
+            if not filename.startswith(f'{Config.DB_PREFIX}_'):
+                continue
+            if not (filename.endswith('.db') or filename.endswith('.zip')):
                 continue
 
-            parts = filename[:-3].split('_')
+            file_prefix = filename.replace('.zip', '').replace('.db', '')
+            parts = file_prefix.split('_')
             if len(parts) < 4:
                 continue
+
             try:
                 year = int(parts[2])
                 month = int(parts[3])
             except ValueError:
                 continue
 
-            if filename.endswith('.db'):
-                db_path = os.path.join(Config.DATA_DIR, filename)
-                self.switch_database(db_path)
-                min_ts, max_ts = self.border_timestamp
-                if min_ts and max_ts:
-                    db_date_ranges[(year, month)] = (min_ts, max_ts)
-            else:
-                zipped_months.add((year, month))
+            file_month_date = dt.datetime(year, month, 1)
+            if file_month_date <= cutoff_date:
+                continue
 
-        cutoff_date = dt.datetime.now() - relativedelta(
-            months=Config.MONTH_AGO)
+            db_path = os.path.join(Config.DATA_DIR, filename)
+            self.switch_database(db_path)
+            min_ts, max_ts = self.border_timestamp
+            if min_ts and max_ts:
+                db_date_ranges[(year, month)] = (min_ts, max_ts)
 
         for filename in os.listdir(self.STATISTIC_DIR):
             if filename.endswith('.csv.gz'):
@@ -411,17 +429,14 @@ class CountersStatisticDB(Config):
             except ValueError:
                 continue
 
-            if (year, month) in zipped_months:
-                continue
-
             file_month_date = dt.datetime(year, month, 1)
-            if file_month_date < cutoff_date:
+            if file_month_date <= cutoff_date:
                 continue
 
             file_path = os.path.join(self.STATISTIC_DIR, filename)
             if (year, month) in db_date_ranges:
                 min_ts, max_ts = db_date_ranges[(year, month)]
-                if not (min_ts <= file_date <= max_ts):
+                if not (min_ts.date() <= file_date.date() < max_ts.date()):
                     unprocessed_files.append(file_path)
             else:
                 unprocessed_files.append(file_path)
@@ -491,7 +506,7 @@ class CountersStatisticDB(Config):
         batch_size = 100_000
         data_not_in_db = self.data_not_in_db()
 
-        for index, file_path in enumerate(self.data_not_in_db()):
+        for index, file_path in enumerate(data_not_in_db):
             print(f'Файл {file_path} ({index + 1}/{len(data_not_in_db)})')
             df = self.read_statistics(file_path)
             total = len(df)
