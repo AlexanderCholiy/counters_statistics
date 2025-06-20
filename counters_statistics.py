@@ -179,11 +179,7 @@ def statistics_2_db():
     - Каждую порцию преобразует в объекты модели Statistic.
     - Добавляет записи в соответствующие месячные БД, исключая дубликаты.
     """
-    today = dt.datetime.today()
-    db_name = f'{Config.DB_PREFIX}_{today.year}_{today.month:02d}.db'
-    db_path = os.path.join(Config.DATA_DIR, db_name)
-    db = CountersStatisticDB(db_path)
-    db.statistics_2_db()
+    CountersStatisticDB().statistics_2_db()
 
 
 @execution_time
@@ -216,7 +212,7 @@ if __name__ == '__main__':
         Config.LOG_DIR, debug=Config.DEBUG).get_logger()
 
     if args.split_statistics_by_month:
-        db_path = r'data\counters_statistics_2025_01.db'
+        db_path = r'data/counters_statistics_2025_01.db'
         split_statistics_by_month(db_path)
     elif args.save_counter_statistic:
         if not args.modem_ip:

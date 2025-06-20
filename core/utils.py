@@ -21,7 +21,10 @@ from .progress_bar import progress_bar
 
 class CountersStatisticDB(Config):
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str | None = None):
+        today = dt.datetime.now()
+        db_name = f'{self.DB_PREFIX}_{today.year}_{today.month:02d}.db'
+        db_path = db_path or os.path.join(self.DATA_DIR, db_name)
         self.engine = self.create_engine(db_path)
         Base.metadata.create_all(self.engine)
         self.metadata = MetaData()
@@ -30,11 +33,21 @@ class CountersStatisticDB(Config):
 
     def create_engine(self, db_path: str) -> Engine:
         """Создаёт движок базы данных, распаковывая zip при необходимости."""
-        if not os.path.exists(db_path):
+        # Если передан zip-файл — распаковать
+        if db_path.endswith('.zip') and os.path.isfile(db_path):
+            extract_dir = os.path.dirname(db_path)
+            db_name = os.path.basename(db_path).replace('.zip', '.db')
+            db_path = os.path.join(extract_dir, db_name)
+            self.unzip_db(
+                db_path.replace('.db', '.zip'), extract_dir, overwrite=True)
+
+        # Если указан .db, но файл отсутствует, а zip с таким же именем есть
+        elif db_path.endswith('.db') and not os.path.isfile(db_path):
             zip_path = db_path.replace('.db', '.zip')
-            if os.path.exists(zip_path):
+            if os.path.isfile(zip_path):
                 extract_dir = os.path.dirname(db_path)
                 self.unzip_db(zip_path, extract_dir, overwrite=True)
+
         return sqlalchemy_create_engine(
             f'sqlite:///{db_path}', echo=self.DEBUG)
 
