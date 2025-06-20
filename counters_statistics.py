@@ -240,17 +240,23 @@ if __name__ == '__main__':
         except Exception:
             logger.exception('Ошибка при архивации БД')
             raise
+        else:
+            logger.info('Архивация баз данных завершена')
     elif args.statistics_2_db:
         try:
             statistics_2_db()
         except Exception:
             logger.exception('Ошибка при добавлении данных в БД')
             raise
+        else:
+            logger.info('Базы данных с показаниями счётчиков обновлены')
     elif args.remove_processed_csv_gz:
         try:
             remove_processed_csv_gz()
         except Exception:
             logger.exception('Ошибка при удалении лишних .csv.gz файлов')
             raise
+        else:
+            logger.info('Лишние файлы .csv.gz удалены')
     else:
         print('Не указана команда. Используйте --help для справки.')

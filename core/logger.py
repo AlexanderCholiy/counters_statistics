@@ -20,8 +20,7 @@ class FileRotatingLogger:
         log_path = os.path.join(log_dir, filename)
 
         file_formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s'
-            ' - %(name)s - [%(pathname)s]'
+            '%(asctime)s - %(levelname)s - %(message)s - [%(pathname)s]'
         )
         console_formatter = logging.Formatter('[%(levelname)s] %(message)s')
 
