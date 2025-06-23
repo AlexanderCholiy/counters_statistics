@@ -1,6 +1,7 @@
 import os
 import datetime as dt
 
+from pandas import DataFrame
 from dateutil.relativedelta import relativedelta
 from core.utils import CountersStatisticDB
 from core.config import Config
@@ -98,6 +99,8 @@ def save_counter_statistic(
 
     step = 10_000
     page_number = 1
+    modem_dates: dict[dt.date, int] = {}
+
     for index, db_file in enumerate(sorted(databases)):
         progress_bar(index, len(databases), 'Поиск данных: ')
         db = CountersStatisticDB(db_file)
@@ -119,6 +122,9 @@ def save_counter_statistic(
                 break
 
             df = db.prepare_statistics(db.statistics_to_dataframe(statistics))
+            counts = df['timestamp'].dt.date.value_counts()
+            for date, count in counts.items():
+                modem_dates[date] = modem_dates.get(date, 0) + count
             sheet_name = f'{sheet_prefix} ({page_number})'
             save_df_2_excel(df, Config.STATISTIC_PATH, sheet_name)
 
@@ -129,8 +135,14 @@ def save_counter_statistic(
             f'Показания счетчика с ip: {modem_ip} '
             f'сохранены: {Config.STATISTIC_PATH}'
         )
+        df_dates = DataFrame(
+            sorted(modem_dates.items()),
+            columns=['Дата', 'Количество записей']
+        )
+        print(df_dates.to_string(index=False))
     else:
-        print('Показания отсутствуют')
+        print('В указанный период не найдено ни одной записи.')
+        print(f'Диапазон дат: {start.date()} — {end.date()}')
 
 
 @execution_time
